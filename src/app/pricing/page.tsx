@@ -7,20 +7,40 @@ export default function PricingPage() {
   const router = useRouter();
 
   async function upgrade() {
-    const { data } = await supabase.auth.getUser();
-    const user = data.user;
-    if (!user) return alert("Please log in first.");
+    // 1) Ensure user is logged in and get an access token
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) {
+      console.error(sessionError);
+      return alert("Could not get your session. Please refresh and try again.");
+    }
 
-    const res = await fetch("/api/stripe/checkout", {
+    const token = sessionData.session?.access_token;
+    if (!token) return alert("Please log in first.");
+
+    // 2) Call PayFast start endpoint (server builds redirectUrl)
+    const res = await fetch("/api/payfast/start", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: user.id, email: user.email }),
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
 
-    const json = await res.json();
-    if (!res.ok) return alert(json.error || "Checkout failed");
+    // 3) Handle non-JSON errors safely
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("PayFast start failed:", text);
+      return alert("Could not start PayFast payment. Please try again.");
+    }
 
-    window.location.href = json.url;
+    const json: { redirectUrl?: string } = await res.json();
+
+    if (!json.redirectUrl) {
+      console.error("PayFast response missing redirectUrl:", json);
+      return alert("Payment redirect failed. Please try again.");
+    }
+
+    // 4) Redirect user to PayFast
+    window.location.href = json.redirectUrl;
   }
 
   return (
@@ -31,7 +51,7 @@ export default function PricingPage() {
         <div className="grid gap-3">
           <div className="rounded-2xl border p-5">
             <div className="font-semibold">Free</div>
-            <ul className="mt-2 text-sm opacity-80 space-y-1">
+            <ul className="mt-2 space-y-1 text-sm opacity-80">
               <li>• 1 series</li>
               <li>• 5 chapters per series</li>
               <li>• Watermark</li>
@@ -40,7 +60,7 @@ export default function PricingPage() {
 
           <div className="rounded-2xl border p-5">
             <div className="font-semibold">Pro</div>
-            <ul className="mt-2 text-sm opacity-80 space-y-1">
+            <ul className="mt-2 space-y-1 text-sm opacity-80">
               <li>• Unlimited series</li>
               <li>• Unlimited chapters</li>
               <li>• No watermark</li>
@@ -52,6 +72,10 @@ export default function PricingPage() {
             >
               Upgrade to Pro
             </button>
+
+            <p className="mt-3 text-xs opacity-60">
+              Note: After payment, PayFast confirms your upgrade via ITN. This can take a few seconds.
+            </p>
           </div>
         </div>
 
