@@ -33,7 +33,7 @@ export default function PricingPage() {
       json = JSON.parse(text);
     } catch {
       console.error("Non-JSON response:", text);
-      return alert("Server returned an unexpected response. Check console.");
+      return alert("Server returned unexpected response. Check console.");
     }
 
     const processUrl: string | undefined = json.processUrl;
@@ -44,7 +44,7 @@ export default function PricingPage() {
       return alert("Payment setup failed (missing fields).");
     }
 
-    // Build and submit a POST form to PayFast (avoids CloudFront 403 on long GET URLs)
+    // Build and submit a POST form to PayFast (avoids CloudFront 403 from long GET URLs)
     const form = document.createElement("form");
     form.method = "POST";
     form.action = processUrl;

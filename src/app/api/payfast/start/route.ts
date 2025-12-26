@@ -8,10 +8,7 @@ function buildQueryString(data: Record<string, string>) {
     .sort();
 
   return keys
-    .map((k) => {
-      const v = (data[k] ?? "").toString().trim();
-      return `${k}=${encodeURIComponent(v)}`;
-    })
+    .map((k) => `${k}=${encodeURIComponent((data[k] ?? "").toString().trim())}`)
     .join("&");
 }
 
@@ -21,24 +18,25 @@ function signPayFast(data: Record<string, string>, passphrase?: string) {
 
   const qs = buildQueryString(copy);
   const p = (passphrase ?? "").toString().trim();
-  const toHash = p ? `${qs}&passphrase=${encodeURIComponent(p)}` : qs;
 
+  const toHash = p ? `${qs}&passphrase=${encodeURIComponent(p)}` : qs;
   return crypto.createHash("md5").update(toHash).digest("hex");
 }
 
 export async function POST(req: Request) {
   try {
+    // --- Auth ---
     const authHeader = req.headers.get("authorization");
     if (!authHeader) return NextResponse.json({ error: "Missing auth" }, { status: 401 });
 
+    // --- Env checks ---
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     const merchant_id = process.env.PAYFAST_MERCHANT_ID;
-    const merchant_key = process.env.PAYFAST_MERCHANT_KEY;
-
     const passphrase = process.env.PAYFAST_PASSPHRASE || "";
+
     const processUrl =
       process.env.PAYFAST_PROCESS_URL || "https://www.payfast.co.za/eng/process";
 
@@ -48,18 +46,25 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
+
     if (!appUrl) {
-      return NextResponse.json({ error: "Missing NEXT_PUBLIC_APP_URL in env vars" }, { status: 500 });
-    }
-    if (!merchant_id || !merchant_key) {
       return NextResponse.json(
-        { error: "Missing PAYFAST_MERCHANT_ID or PAYFAST_MERCHANT_KEY in env vars" },
+        { error: "Missing NEXT_PUBLIC_APP_URL in env vars" },
         { status: 500 }
       );
     }
 
+    if (!merchant_id) {
+      return NextResponse.json(
+        { error: "Missing PAYFAST_MERCHANT_ID in env vars" },
+        { status: 500 }
+      );
+    }
+
+    // --- Supabase admin client (server) ---
     const supabase = createClient(supabaseUrl, serviceRole);
 
+    // Verify user from token
     const token = authHeader.replace("Bearer ", "").trim();
     const { data: userData, error: userErr } = await supabase.auth.getUser(token);
     if (userErr || !userData?.user) return NextResponse.json({ error: "Invalid auth" }, { status: 401 });
@@ -67,15 +72,17 @@ export async function POST(req: Request) {
     const userId = userData.user.id;
     const email = (userData.user.email ?? "").trim();
 
-    // Price (ZAR)
-    const amount = "99.00";
+    // --- Pricing (ZAR) ---
+    const amount = "99.00"; // change later if needed
     const item_name = "PanelFlow Pro (30 days)";
+
+    // Unique payment reference
     const m_payment_id = `pf_${userId}_${Date.now()}`;
 
-    // Build payload (POSTed to PayFast)
+    // ✅ IMPORTANT: These are the ONLY fields we send to PayFast
+    // ❌ Do NOT send merchant_key (that triggers CloudFront/WAF blocks sometimes)
     const fields: Record<string, string> = {
       merchant_id,
-      merchant_key,
 
       return_url: `${appUrl}/billing/success`,
       cancel_url: `${appUrl}/pricing`,
