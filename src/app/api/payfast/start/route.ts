@@ -25,7 +25,7 @@ function signPayFast(data: Record<string, string>, passphrase?: string) {
 
 export async function POST(req: Request) {
   try {
-    // 1) Auth
+    // 1) Auth header
     const authHeader = req.headers.get("authorization");
     if (!authHeader) return NextResponse.json({ error: "Missing auth" }, { status: 401 });
 
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
     const merchant_id = process.env.PAYFAST_MERCHANT_ID;
     const passphrase = process.env.PAYFAST_PASSPHRASE || "";
 
-    // IMPORTANT: PayFast process endpoint
+    // Hardcode the live process endpoint (no env surprises)
     const processUrl = "https://www.payfast.co.za/eng/process";
 
     if (!supabaseUrl || !serviceRole) {
@@ -46,32 +46,30 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
-
     if (!appUrl) {
       return NextResponse.json({ error: "Missing NEXT_PUBLIC_APP_URL in env vars" }, { status: 500 });
     }
-
     if (!merchant_id) {
       return NextResponse.json({ error: "Missing PAYFAST_MERCHANT_ID in env vars" }, { status: 500 });
     }
 
-    // 3) Verify user
+    // 3) Verify user (needed so we can attach userId to the transaction)
     const supabase = createClient(supabaseUrl, serviceRole);
-    const token = authHeader.replace("Bearer ", "").trim();
 
+    const token = authHeader.replace("Bearer ", "").trim();
     const { data: userData, error: userErr } = await supabase.auth.getUser(token);
-    if (userErr || !userData?.user) {
-      return NextResponse.json({ error: "Invalid auth" }, { status: 401 });
-    }
+    if (userErr || !userData?.user) return NextResponse.json({ error: "Invalid auth" }, { status: 401 });
 
     const userId = userData.user.id;
 
-    // 4) Payment fields (MINIMAL)
+    // 4) WAF-safe payment fields
     const amount = "99.00";
-    const item_name = "PanelFlow Pro (30 days)";
-    const m_payment_id = `pf_${userId}_${Date.now()}`;
+    const item_name = "PanelFlow Pro"; // keep simple
 
-    // PayFast required/commonly used fields for once-off
+    // IMPORTANT: Use a short numeric payment id (avoid underscores/long strings)
+    const m_payment_id = String(Date.now()); // numeric string
+
+    // Use custom_str1 to store your userId for ITN matching (safe, optional)
     const fields: Record<string, string> = {
       merchant_id,
       return_url: `${appUrl}/billing/success`,
@@ -80,16 +78,12 @@ export async function POST(req: Request) {
       m_payment_id,
       amount,
       item_name,
+      custom_str1: userId,
     };
 
-    // 5) Signature
     fields.signature = signPayFast(fields, passphrase);
 
-    // 6) Return payload to client (client will POST these fields)
-    return NextResponse.json({
-      processUrl,
-      fields,
-    });
+    return NextResponse.json({ processUrl, fields });
   } catch (e: any) {
     console.error("PayFast start error:", e);
     return NextResponse.json(

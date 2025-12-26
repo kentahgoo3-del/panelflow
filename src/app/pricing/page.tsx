@@ -46,22 +46,19 @@ export default function PricingPage() {
       return alert("Payment setup failed (missing processUrl/fields).");
     }
 
-    // 3) Validate required fields exist (this prevents “No payment data received”)
-    const required = ["merchant_id", "amount", "item_name", "signature"];
+    // 3) Validate required fields exist
+    const required = ["merchant_id", "amount", "item_name", "signature", "m_payment_id"];
     const missing = required.filter((k) => !fields[k] || String(fields[k]).trim() === "");
-
-    console.log("PayFast POST target:", processUrl);
-    console.log("PayFast fields:", fields);
-
     if (missing.length) {
-      console.error("Missing PayFast required fields:", missing, fields);
+      console.error("Missing required PayFast fields:", missing, fields);
       return alert(`Missing required PayFast fields: ${missing.join(", ")}`);
     }
 
-    // 4) Build and POST a form to PayFast
+    // 4) Build and submit a POST form to PayFast
     const form = document.createElement("form");
     form.method = "POST";
     form.action = processUrl;
+    form.acceptCharset = "utf-8";
 
     Object.entries(fields).forEach(([key, value]) => {
       const input = document.createElement("input");
