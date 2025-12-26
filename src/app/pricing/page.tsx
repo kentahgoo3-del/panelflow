@@ -7,6 +7,7 @@ export default function PricingPage() {
   const router = useRouter();
 
   async function upgrade() {
+    // 1) Get session token
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
     if (sessionError) {
       console.error(sessionError);
@@ -16,6 +17,7 @@ export default function PricingPage() {
     const token = sessionData.session?.access_token;
     if (!token) return alert("Please log in first.");
 
+    // 2) Ask server for PayFast fields
     const res = await fetch("/api/payfast/start", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
@@ -41,10 +43,22 @@ export default function PricingPage() {
 
     if (!processUrl || !fields) {
       console.error("Missing processUrl/fields:", json);
-      return alert("Payment setup failed (missing fields).");
+      return alert("Payment setup failed (missing processUrl/fields).");
     }
 
-    // Build and submit a POST form to PayFast (avoids CloudFront 403 from long GET URLs)
+    // 3) Validate required fields exist (this prevents “No payment data received”)
+    const required = ["merchant_id", "amount", "item_name", "signature"];
+    const missing = required.filter((k) => !fields[k] || String(fields[k]).trim() === "");
+
+    console.log("PayFast POST target:", processUrl);
+    console.log("PayFast fields:", fields);
+
+    if (missing.length) {
+      console.error("Missing PayFast required fields:", missing, fields);
+      return alert(`Missing required PayFast fields: ${missing.join(", ")}`);
+    }
+
+    // 4) Build and POST a form to PayFast
     const form = document.createElement("form");
     form.method = "POST";
     form.action = processUrl;
