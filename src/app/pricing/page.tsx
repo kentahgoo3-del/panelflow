@@ -7,40 +7,58 @@ export default function PricingPage() {
   const router = useRouter();
 
   async function upgrade() {
-    // 1) Ensure user is logged in and get an access token
     const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
     if (sessionError) {
       console.error(sessionError);
-      return alert("Could not get your session. Please refresh and try again.");
+      return alert("Could not get session. Please refresh and try again.");
     }
 
     const token = sessionData.session?.access_token;
     if (!token) return alert("Please log in first.");
 
-    // 2) Call PayFast start endpoint (server builds redirectUrl)
     const res = await fetch("/api/payfast/start", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
-    // 3) Handle non-JSON errors safely
+    const text = await res.text();
+
     if (!res.ok) {
-      const text = await res.text();
-      console.error("PayFast start failed:", text);
-      return alert("Could not start PayFast payment. Please try again.");
+      console.error("PayFast start failed:", res.status, text);
+      return alert(`PayFast start failed (${res.status}):\n${text}`);
     }
 
-    const json: { redirectUrl?: string } = await res.json();
-
-    if (!json.redirectUrl) {
-      console.error("PayFast response missing redirectUrl:", json);
-      return alert("Payment redirect failed. Please try again.");
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      console.error("Non-JSON response:", text);
+      return alert("Server returned an unexpected response. Check console.");
     }
 
-    // 4) Redirect user to PayFast
-    window.location.href = json.redirectUrl;
+    const processUrl: string | undefined = json.processUrl;
+    const fields: Record<string, string> | undefined = json.fields;
+
+    if (!processUrl || !fields) {
+      console.error("Missing processUrl/fields:", json);
+      return alert("Payment setup failed (missing fields).");
+    }
+
+    // Build and submit a POST form to PayFast (avoids CloudFront 403 on long GET URLs)
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = processUrl;
+
+    Object.entries(fields).forEach(([key, value]) => {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = key;
+      input.value = value ?? "";
+      form.appendChild(input);
+    });
+
+    document.body.appendChild(form);
+    form.submit();
   }
 
   return (
@@ -74,7 +92,7 @@ export default function PricingPage() {
             </button>
 
             <p className="mt-3 text-xs opacity-60">
-              Note: After payment, PayFast confirms your upgrade via ITN. This can take a few seconds.
+              Note: PayFast confirms your upgrade via ITN after payment.
             </p>
           </div>
         </div>
