@@ -2,17 +2,10 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
-/**
- * FINAL RULE (for your PayFast behavior):
- * - POST merchant_id + merchant_key
- * - Signature is MD5 of:
- *   sorted key=value pairs (URL-encoded), excluding only "signature"
- * - merchant_key IS INCLUDED in signature input
- * - No passphrase appended (keep env blank)
- */
 function buildSignatureString(data: Record<string, string>) {
   const keys = Object.keys(data)
     .filter((k) => k !== "signature")
+    .filter((k) => k !== "merchant_key") // ✅ excluded from signing
     .filter((k) => data[k] !== undefined && data[k] !== null && String(data[k]).trim() !== "")
     .sort();
 
@@ -21,9 +14,11 @@ function buildSignatureString(data: Record<string, string>) {
     .join("&");
 }
 
-function signPayFast(data: Record<string, string>) {
+function signPayFast(data: Record<string, string>, passphrase?: string) {
   const base = buildSignatureString(data);
-  return crypto.createHash("md5").update(base).digest("hex");
+  const p = (passphrase ?? "").toString().trim();
+  const toHash = p ? `${base}&passphrase=${encodeURIComponent(p)}` : base;
+  return crypto.createHash("md5").update(toHash).digest("hex");
 }
 
 export async function POST(req: Request) {
@@ -37,6 +32,7 @@ export async function POST(req: Request) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     const merchant_id = process.env.PAYFAST_MERCHANT_ID;
     const merchant_key = process.env.PAYFAST_MERCHANT_KEY;
+    const passphrase = (process.env.PAYFAST_PASSPHRASE || "").trim(); // keep blank unless PayFast confirms it's set
 
     const processUrl = "https://www.payfast.co.za/eng/process";
 
@@ -56,7 +52,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Verify user
     const supabase = createClient(supabaseUrl, serviceRole);
     const token = authHeader.replace("Bearer ", "").trim();
 
@@ -65,14 +60,13 @@ export async function POST(req: Request) {
 
     const userId = userData.user.id;
 
-    // Payment fields
     const amount = "99.00";
     const item_name = "PanelFlow Pro";
     const m_payment_id = String(Date.now());
 
     const fields: Record<string, string> = {
       merchant_id,
-      merchant_key,
+      merchant_key, // ✅ still POSTed
 
       return_url: `${appUrl}/billing/success`,
       cancel_url: `${appUrl}/pricing`,
@@ -85,8 +79,8 @@ export async function POST(req: Request) {
       custom_str1: userId,
     };
 
-    // Signature includes merchant_key, excludes only signature
-    fields.signature = signPayFast(fields);
+    // ✅ signature computed excluding merchant_key
+    fields.signature = signPayFast(fields, passphrase);
 
     return NextResponse.json({ processUrl, fields });
   } catch (e: any) {
