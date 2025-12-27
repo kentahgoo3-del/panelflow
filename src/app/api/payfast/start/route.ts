@@ -2,8 +2,18 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
-function buildQueryString(data: Record<string, string>) {
+/**
+ * PayFast signature rules:
+ * - Sort keys alphabetically
+ * - URL-encode values
+ * - Exclude "signature" itself
+ * - Include merchant_id, merchant_key and all other posted fields
+ * - Append passphrase if set: &passphrase=...
+ * - MD5 hash of the full string
+ */
+function buildSignatureString(data: Record<string, string>) {
   const keys = Object.keys(data)
+    .filter((k) => k !== "signature")
     .filter((k) => data[k] !== undefined && data[k] !== null && String(data[k]).trim() !== "")
     .sort();
 
@@ -12,29 +22,21 @@ function buildQueryString(data: Record<string, string>) {
     .join("&");
 }
 
-// IMPORTANT: Signature should NOT include "signature" itself
-// In many PayFast setups, it also should NOT include merchant_key even if merchant_key is posted.
 function signPayFast(data: Record<string, string>, passphrase?: string) {
-  const copy: Record<string, string> = { ...data };
-
-  // remove signature from hash input
-  delete copy.signature;
-
-  // remove merchant_key from hash input (but still send merchant_key in POST payload)
-  delete copy.merchant_key;
-
-  const qs = buildQueryString(copy);
+  const base = buildSignatureString(data);
   const p = (passphrase ?? "").toString().trim();
-  const toHash = p ? `${qs}&passphrase=${encodeURIComponent(p)}` : qs;
 
+  const toHash = p ? `${base}&passphrase=${encodeURIComponent(p)}` : base;
   return crypto.createHash("md5").update(toHash).digest("hex");
 }
 
 export async function POST(req: Request) {
   try {
+    // Auth header
     const authHeader = req.headers.get("authorization");
     if (!authHeader) return NextResponse.json({ error: "Missing auth" }, { status: 401 });
 
+    // Env vars
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -61,6 +63,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // Verify user
     const supabase = createClient(supabaseUrl, serviceRole);
     const token = authHeader.replace("Bearer ", "").trim();
 
@@ -69,11 +72,12 @@ export async function POST(req: Request) {
 
     const userId = userData.user.id;
 
+    // Payment fields (keep simple)
     const amount = "99.00";
     const item_name = "PanelFlow Pro";
     const m_payment_id = String(Date.now());
 
-    // POST fields to PayFast (includes merchant_key)
+    // Fields we POST to PayFast
     const fields: Record<string, string> = {
       merchant_id,
       merchant_key,
@@ -89,7 +93,7 @@ export async function POST(req: Request) {
       custom_str1: userId,
     };
 
-    // signature excludes merchant_key
+    // Signature MUST be computed from the exact posted fields above
     fields.signature = signPayFast(fields, passphrase);
 
     return NextResponse.json({ processUrl, fields });
