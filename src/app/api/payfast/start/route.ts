@@ -2,18 +2,16 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
-/**
- * PayFast signature rules:
- * - Sort keys alphabetically
- * - URL-encode values
- * - Exclude "signature" itself
- * - Include merchant_id, merchant_key and all other posted fields
- * - Append passphrase if set: &passphrase=...
- * - MD5 hash of the full string
- */
+// Build query string exactly as PayFast expects for signature:
+// - sort keys alphabetically
+// - exclude signature
+// - exclude merchant_key from signature input (but still POST it)
+// - include only non-empty values
+// - URL-encode values
 function buildSignatureString(data: Record<string, string>) {
   const keys = Object.keys(data)
     .filter((k) => k !== "signature")
+    .filter((k) => k !== "merchant_key") // ✅ key point
     .filter((k) => data[k] !== undefined && data[k] !== null && String(data[k]).trim() !== "")
     .sort();
 
@@ -22,21 +20,24 @@ function buildSignatureString(data: Record<string, string>) {
     .join("&");
 }
 
+// Passphrase handling:
+// - If passphrase is set in PayFast, append it exactly like this:
+//   &passphrase=YOUR_PASSPHRASE
+// - Only encode the passphrase if it contains special characters.
+//   (Yours is alphanumeric, so encoding does not change it.)
 function signPayFast(data: Record<string, string>, passphrase?: string) {
   const base = buildSignatureString(data);
   const p = (passphrase ?? "").toString().trim();
 
-  const toHash = p ? `${base}&passphrase=${encodeURIComponent(p)}` : base;
+  const toHash = p ? `${base}&passphrase=${p}` : base; // ✅ append raw (safe for alphanumeric)
   return crypto.createHash("md5").update(toHash).digest("hex");
 }
 
 export async function POST(req: Request) {
   try {
-    // Auth header
     const authHeader = req.headers.get("authorization");
     if (!authHeader) return NextResponse.json({ error: "Missing auth" }, { status: 401 });
 
-    // Env vars
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -72,12 +73,11 @@ export async function POST(req: Request) {
 
     const userId = userData.user.id;
 
-    // Payment fields (keep simple)
     const amount = "99.00";
     const item_name = "PanelFlow Pro";
     const m_payment_id = String(Date.now());
 
-    // Fields we POST to PayFast
+    // Fields we POST to PayFast (includes merchant_key)
     const fields: Record<string, string> = {
       merchant_id,
       merchant_key,
@@ -93,7 +93,7 @@ export async function POST(req: Request) {
       custom_str1: userId,
     };
 
-    // Signature MUST be computed from the exact posted fields above
+    // Signature excludes merchant_key, includes passphrase (raw for alphanumeric)
     fields.signature = signPayFast(fields, passphrase);
 
     return NextResponse.json({ processUrl, fields });
