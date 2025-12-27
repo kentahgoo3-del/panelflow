@@ -13,6 +13,7 @@ function buildQueryString(data: Record<string, string>) {
 }
 
 function signPayFast(data: Record<string, string>, passphrase?: string) {
+  // PayFast signature is MD5 of sorted query string (excluding signature), with passphrase appended if used.
   const copy: Record<string, string> = { ...data };
   delete copy.signature;
 
@@ -35,9 +36,10 @@ export async function POST(req: Request) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     const merchant_id = process.env.PAYFAST_MERCHANT_ID;
+    const merchant_key = process.env.PAYFAST_MERCHANT_KEY; // ✅ REQUIRED
     const passphrase = process.env.PAYFAST_PASSPHRASE || "";
 
-    // Hardcode the live process endpoint (no env surprises)
+    // Live endpoint
     const processUrl = "https://www.payfast.co.za/eng/process";
 
     if (!supabaseUrl || !serviceRole) {
@@ -49,11 +51,14 @@ export async function POST(req: Request) {
     if (!appUrl) {
       return NextResponse.json({ error: "Missing NEXT_PUBLIC_APP_URL in env vars" }, { status: 500 });
     }
-    if (!merchant_id) {
-      return NextResponse.json({ error: "Missing PAYFAST_MERCHANT_ID in env vars" }, { status: 500 });
+    if (!merchant_id || !merchant_key) {
+      return NextResponse.json(
+        { error: "Missing PAYFAST_MERCHANT_ID or PAYFAST_MERCHANT_KEY in env vars" },
+        { status: 500 }
+      );
     }
 
-    // 3) Verify user (needed so we can attach userId to the transaction)
+    // 3) Verify user
     const supabase = createClient(supabaseUrl, serviceRole);
 
     const token = authHeader.replace("Bearer ", "").trim();
@@ -62,22 +67,24 @@ export async function POST(req: Request) {
 
     const userId = userData.user.id;
 
-    // 4) WAF-safe payment fields
+    // 4) Payment fields
     const amount = "99.00";
-    const item_name = "PanelFlow Pro"; // keep simple
+    const item_name = "PanelFlow Pro";
+    const m_payment_id = String(Date.now());
 
-    // IMPORTANT: Use a short numeric payment id (avoid underscores/long strings)
-    const m_payment_id = String(Date.now()); // numeric string
-
-    // Use custom_str1 to store your userId for ITN matching (safe, optional)
+    // ✅ PayFast requires merchant_id AND merchant_key for /eng/process in your case
     const fields: Record<string, string> = {
       merchant_id,
+      merchant_key,
+
       return_url: `${appUrl}/billing/success`,
       cancel_url: `${appUrl}/pricing`,
       notify_url: `${appUrl}/api/payfast/itn`,
+
       m_payment_id,
       amount,
       item_name,
+
       custom_str1: userId,
     };
 
