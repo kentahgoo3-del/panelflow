@@ -12,10 +12,16 @@ function buildQueryString(data: Record<string, string>) {
     .join("&");
 }
 
+// IMPORTANT: Signature should NOT include "signature" itself
+// In many PayFast setups, it also should NOT include merchant_key even if merchant_key is posted.
 function signPayFast(data: Record<string, string>, passphrase?: string) {
-  // PayFast signature is MD5 of sorted query string (excluding signature), with passphrase appended if used.
   const copy: Record<string, string> = { ...data };
+
+  // remove signature from hash input
   delete copy.signature;
+
+  // remove merchant_key from hash input (but still send merchant_key in POST payload)
+  delete copy.merchant_key;
 
   const qs = buildQueryString(copy);
   const p = (passphrase ?? "").toString().trim();
@@ -26,20 +32,17 @@ function signPayFast(data: Record<string, string>, passphrase?: string) {
 
 export async function POST(req: Request) {
   try {
-    // 1) Auth header
     const authHeader = req.headers.get("authorization");
     if (!authHeader) return NextResponse.json({ error: "Missing auth" }, { status: 401 });
 
-    // 2) Env vars
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL;
     const merchant_id = process.env.PAYFAST_MERCHANT_ID;
-    const merchant_key = process.env.PAYFAST_MERCHANT_KEY; // ✅ REQUIRED
+    const merchant_key = process.env.PAYFAST_MERCHANT_KEY;
     const passphrase = process.env.PAYFAST_PASSPHRASE || "";
 
-    // Live endpoint
     const processUrl = "https://www.payfast.co.za/eng/process";
 
     if (!supabaseUrl || !serviceRole) {
@@ -58,21 +61,19 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3) Verify user
     const supabase = createClient(supabaseUrl, serviceRole);
-
     const token = authHeader.replace("Bearer ", "").trim();
+
     const { data: userData, error: userErr } = await supabase.auth.getUser(token);
     if (userErr || !userData?.user) return NextResponse.json({ error: "Invalid auth" }, { status: 401 });
 
     const userId = userData.user.id;
 
-    // 4) Payment fields
     const amount = "99.00";
     const item_name = "PanelFlow Pro";
     const m_payment_id = String(Date.now());
 
-    // ✅ PayFast requires merchant_id AND merchant_key for /eng/process in your case
+    // POST fields to PayFast (includes merchant_key)
     const fields: Record<string, string> = {
       merchant_id,
       merchant_key,
@@ -88,6 +89,7 @@ export async function POST(req: Request) {
       custom_str1: userId,
     };
 
+    // signature excludes merchant_key
     fields.signature = signPayFast(fields, passphrase);
 
     return NextResponse.json({ processUrl, fields });
