@@ -4,7 +4,6 @@ import crypto from "crypto";
 function buildSignatureString(data: Record<string, string>) {
   const keys = Object.keys(data)
     .filter((k) => k !== "signature")
-    .filter((k) => k !== "merchant_key") // ✅ match production signing
     .filter((k) => data[k] !== undefined && data[k] !== null && String(data[k]).trim() !== "")
     .sort();
 
@@ -17,7 +16,6 @@ export async function GET() {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "";
   const merchant_id = process.env.PAYFAST_MERCHANT_ID || "";
   const merchant_key = process.env.PAYFAST_MERCHANT_KEY || "";
-  const passphrase = (process.env.PAYFAST_PASSPHRASE || "").trim();
 
   const fields: Record<string, string> = {
     merchant_id,
@@ -32,13 +30,12 @@ export async function GET() {
   };
 
   const base = buildSignatureString(fields);
-  const toHash = passphrase ? `${base}&passphrase=${passphrase}` : base;
-  const signature = crypto.createHash("md5").update(toHash).digest("hex");
+  const signature = crypto.createHash("md5").update(base).digest("hex");
 
   return NextResponse.json({
     baseString: base,
-    toHash,
+    toHash: base,
     signature,
-    hasPassphrase: !!passphrase,
+    hasPassphrase: false,
   });
 }
